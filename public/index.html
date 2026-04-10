@@ -1118,7 +1118,14 @@
         localStorage.setItem(STORAGE_KEY_TIER, memberTier);
         localStorage.setItem(STORAGE_KEY_PASSCODE, storedPasscode);
         applyMemberUI();
+      } else if (res.status === 429) {
+        errorEl.textContent = data.error || '1時間ロックされています。時間をおいて再試行してください。';
+        errorEl.style.display = 'block';
       } else {
+        const rem = data.attemptsRemaining;
+        errorEl.textContent = rem > 0
+          ? `合言葉が正しくありません（残り${rem}回で1時間ロック）`
+          : '合言葉が正しくありません。もう一度確認してください。';
         errorEl.style.display = 'block';
       }
     } catch {

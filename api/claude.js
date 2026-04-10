@@ -9,6 +9,55 @@ function getTier(passcode) {
   return 'free';
 }
 
+// ===== グローバル日次制限（インメモリ）=====
+// Vercelのインスタンスごとにリセットされるが、低トラフィックでは十分な抑止力になる
+const DAILY_GLOBAL_LIMIT = parseInt(process.env.DAILY_GLOBAL_LIMIT || '100', 10);
+let globalUsage = { date: '', count: 0 };
+
+function getTodayUTC() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function checkAndIncrementGlobal() {
+  const today = getTodayUTC();
+  if (globalUsage.date !== today) globalUsage = { date: today, count: 0 };
+  if (globalUsage.count >= DAILY_GLOBAL_LIMIT) return false;
+  globalUsage.count++;
+  return true;
+}
+
+// ===== 合言葉誤入力ロック（インメモリ）=====
+const MAX_PASSCODE_ATTEMPTS = 5;
+const LOCK_DURATION_MS = 60 * 60 * 1000; // 1時間
+const passcodeLockMap = new Map(); // ip → { attempts, lockedUntil }
+
+function getClientIP(req) {
+  const fwd = req.headers['x-forwarded-for'] || '';
+  return (fwd ? fwd.split(',')[0] : req.socket?.remoteAddress || 'unknown').trim();
+}
+
+function isPasscodeLocked(ip) {
+  const entry = passcodeLockMap.get(ip);
+  if (!entry) return false;
+  if (entry.lockedUntil && Date.now() < entry.lockedUntil) return true;
+  passcodeLockMap.delete(ip); // ロック期限切れ → 削除
+  return false;
+}
+
+function recordPasscodeFailure(ip) {
+  const entry = passcodeLockMap.get(ip) || { attempts: 0, lockedUntil: null };
+  entry.attempts++;
+  if (entry.attempts >= MAX_PASSCODE_ATTEMPTS) {
+    entry.lockedUntil = Date.now() + LOCK_DURATION_MS;
+    console.warn(`[passcode lock] IP ${ip} locked for 1 hour after ${entry.attempts} failed attempts`);
+  }
+  passcodeLockMap.set(ip, entry);
+}
+
+function clearPasscodeFailures(ip) {
+  passcodeLockMap.delete(ip);
+}
+
 // 視点の内部ラベルマッピング
 const PERSPECTIVE_MAP = {
   design:     'デザイナー（UI/UX・ブランディング・視覚表現）',
@@ -85,16 +134,37 @@ module.exports = async (req, res) => {
   }
 
   const { rawPrompt, preset, perspective, goal, depth, outputFormat, strictness, passcode } = req.body || {};
+  const ip = getClientIP(req);
+  const tier = getTier(passcode || '');
 
   // パスコード確認専用リクエスト
-  const tier = getTier(passcode || '');
   if (rawPrompt === '_passcode_check_') {
+    if (isPasscodeLocked(ip)) {
+      return jsonError(res, 429, '誤入力が続いたため1時間ロックされています。時間をおいて再試行してください。');
+    }
+    if (tier === 'free' && passcode) {
+      // 合言葉が入力されたが不正 → 失敗記録
+      recordPasscodeFailure(ip);
+      const entry = passcodeLockMap.get(ip);
+      const remaining = MAX_PASSCODE_ATTEMPTS - (entry?.attempts || 0);
+      return sendJSON(res, 200, {
+        ok: true, tier,
+        attemptsRemaining: Math.max(0, remaining),
+      });
+    }
+    // 正しい合言葉 → 失敗記録をリセット
+    clearPasscodeFailures(ip);
     return sendJSON(res, 200, { ok: true, tier });
   }
 
   // 入力チェック
   if (!rawPrompt || rawPrompt.trim() === '') {
     return jsonError(res, 400, '依頼内容を入力してください。');
+  }
+
+  // グローバル日次制限（メンバー・管理者は対象外）
+  if (tier === 'free' && !checkAndIncrementGlobal()) {
+    return jsonError(res, 429, '本日のサービス全体の利用上限に達しました。明日またお試しください。');
   }
 
   // APIキーチェック
