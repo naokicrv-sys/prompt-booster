@@ -21,7 +21,7 @@ const SYSTEM_PROMPT = `あなたはプロンプトエンジニアリングの専
 - 強化後プロンプトは『あなたは〜です』から始める
 - 観点・制約・出力形式を具体的に追加する
 - 金融助言・投資推奨は避け、比較・整理・リスク洗い出しの方向で強化する
-- 簡潔にまとめ、過剰に長くしない
+- 各フィールドは必ず簡潔にまとめること。improvedPromptは200文字以内、他のフィールドも短く
 
 必ずJSONのみを返すこと（前置き・説明不要）:
 {"selectedPerspective":"視点名","improvedPrompt":"強化後プロンプト","whyImproved":["ポイント1","ポイント2"],"usageGuide":"使い方（短文）","followupPrompt":"追撃プロンプト1本","previewBenefits":["得られるもの1","得られるもの2"],"suggestedNextAction":"次にやること"}`;
@@ -101,7 +101,7 @@ module.exports = async (req, res) => {
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1500,
+        max_tokens: 2000,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
       }),
