@@ -1,4 +1,4 @@
-// Node.js 18+ のネイティブ fetch を使用（node-fetch 不要）
+const fetch = require('node-fetch');
 
 // 視点の内部ラベルマッピング
 const PERSPECTIVE_MAP = {

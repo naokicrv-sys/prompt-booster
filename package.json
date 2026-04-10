@@ -2,12 +2,12 @@
   "name": "prompt-booster",
   "version": "1.0.0",
   "description": "Prompt Booster for ChatGPT - 弱い依頼を強い聞き方に変換するツール",
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
     "dev": "vercel dev",
     "start": "vercel dev"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
   },
   "devDependencies": {
     "dotenv": "^16.4.5"
