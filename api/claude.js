@@ -134,15 +134,21 @@ module.exports = async (req, res) => {
 
     const data = await response.json();
     const content = data.content?.[0]?.text || '';
+    console.log('raw content:', content.slice(0, 300));
 
-    // JSONを抽出してパース
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error('JSON not found in response:', content);
-      return jsonError(res, 500, '結果の解析に失敗しました。もう一度お試しください。', content.slice(0, 200));
+    // マークダウンコードブロック・前後テキストを除去してJSONを抽出
+    let parsed;
+    try {
+      // ```json ... ``` または ``` ... ``` を除去
+      const stripped = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+      // { } で囲まれた部分を抽出
+      const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('no JSON found');
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      console.error('JSON parse failed. raw content:', content);
+      return jsonError(res, 500, '結果の解析に失敗しました。もう一度お試しください。', content.slice(0, 300));
     }
-
-    const parsed = JSON.parse(jsonMatch[0]);
 
     return sendJSON(res, 200, {
       ok: true,
