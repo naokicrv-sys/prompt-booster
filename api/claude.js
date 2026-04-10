@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+// Node.js 18+ のネイティブ fetch を使用（node-fetch 不要）
 
 // 視点の内部ラベルマッピング
 const PERSPECTIVE_MAP = {
@@ -64,28 +64,34 @@ ${presetText}
 JSONフォーマットのみで返してください。`;
 }
 
+// エラーレスポンスを必ずJSONで返すヘルパー
+function jsonError(res, status, error, details = '') {
+  return res.status(status).json({ ok: false, error, details });
+}
+
 module.exports = async (req, res) => {
-  // CORS（同一オリジン想定だが念のため）
+  // レスポンスは必ずJSONにする（Vercel自身のエラーを除く）
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'このエンドポイントはPOSTのみ対応しています。' });
+    return jsonError(res, 405, 'このエンドポイントはPOSTのみ対応しています。');
   }
 
   const { rawPrompt, preset, perspective, goal, depth, outputFormat, strictness } = req.body || {};
 
   // 入力チェック
   if (!rawPrompt || rawPrompt.trim() === '') {
-    return res.status(400).json({ error: '依頼内容を入力してください。' });
+    return jsonError(res, 400, '依頼内容を入力してください。');
   }
 
   // APIキーチェック
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'APIキーが設定されていません。Vercelの環境変数を確認してください。' });
+    return jsonError(res, 500, 'APIキーが設定されていません。', 'ANTHROPIC_API_KEY が未設定です。Vercel の Environment Variables を確認してください。');
   }
 
   try {
@@ -109,7 +115,12 @@ module.exports = async (req, res) => {
     if (!response.ok) {
       const errBody = await response.text();
       console.error('Anthropic API error:', response.status, errBody);
-      return res.status(502).json({ error: 'AIとの通信に失敗しました。しばらく待ってから再試行してください。' });
+      const msg =
+        response.status === 401 ? 'APIキーが無効です。Vercelの環境変数を確認してください。' :
+        response.status === 429 ? 'APIの利用制限に達しました。しばらく待ってから再試行してください。' :
+        response.status === 400 ? 'リクエストの形式が不正です。' :
+        `AIとの通信に失敗しました（ステータス: ${response.status}）`;
+      return jsonError(res, 502, msg, errBody.slice(0, 300));
     }
 
     const data = await response.json();
@@ -119,12 +130,13 @@ module.exports = async (req, res) => {
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.error('JSON not found in response:', content);
-      return res.status(500).json({ error: '結果の解析に失敗しました。もう一度お試しください。' });
+      return jsonError(res, 500, '結果の解析に失敗しました。もう一度お試しください。', content.slice(0, 200));
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
 
     return res.status(200).json({
+      ok: true,
       improvedPrompt:      parsed.improvedPrompt      || '',
       selectedPerspective: parsed.selectedPerspective || '',
       whyImproved:         parsed.whyImproved         || [],
@@ -136,7 +148,10 @@ module.exports = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Server error:', err);
-    return res.status(500).json({ error: 'サーバーエラーが発生しました。もう一度お試しください。' });
+    console.error('Server error:', err.name, err.message);
+    const msg = err.message?.includes('fetch')
+      ? 'ネットワークエラーが発生しました。'
+      : 'サーバーエラーが発生しました。';
+    return jsonError(res, 500, msg, err.message);
   }
 };

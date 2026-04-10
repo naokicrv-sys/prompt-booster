@@ -1118,9 +1118,17 @@
         }),
       });
 
-      const data = await res.json();
+      // JSONでないレスポンスが来ても壊れないように保護
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error('サーバーからの応答が不正です。しばらく待ってから再試行してください。');
+      }
 
-      if (!res.ok) {
+      if (!res.ok || data.ok === false) {
+        // details があれば開発者向けにコンソールへ
+        if (data.details) console.error('API error details:', data.details);
         throw new Error(data.error || '変換に失敗しました。');
       }
 
