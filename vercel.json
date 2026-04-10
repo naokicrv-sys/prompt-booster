@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "functions": {
+    "api/claude.js": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/public/index.html" },
+    { "source": "/((?!api/).*)", "destination": "/public/$1" }
+  ]
+}
