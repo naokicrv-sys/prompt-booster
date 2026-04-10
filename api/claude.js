@@ -1,5 +1,14 @@
 const fetch = require('node-fetch');
 
+// ===== パスコード検証 =====
+function getTier(passcode) {
+  const adminCode  = process.env.ADMIN_PASSCODE  || '';
+  const memberCode = process.env.MEMBER_PASSCODE || '';
+  if (adminCode  && passcode === adminCode)  return 'admin';
+  if (memberCode && passcode === memberCode) return 'member';
+  return 'free';
+}
+
 // 視点の内部ラベルマッピング
 const PERSPECTIVE_MAP = {
   design:     'デザイナー（UI/UX・ブランディング・視覚表現）',
@@ -75,7 +84,13 @@ module.exports = async (req, res) => {
     return jsonError(res, 405, 'このエンドポイントはPOSTのみ対応しています。');
   }
 
-  const { rawPrompt, preset, perspective, goal, depth, outputFormat, strictness } = req.body || {};
+  const { rawPrompt, preset, perspective, goal, depth, outputFormat, strictness, passcode } = req.body || {};
+
+  // パスコード確認専用リクエスト
+  const tier = getTier(passcode || '');
+  if (rawPrompt === '_passcode_check_') {
+    return sendJSON(res, 200, { ok: true, tier });
+  }
 
   // 入力チェック
   if (!rawPrompt || rawPrompt.trim() === '') {
@@ -152,6 +167,7 @@ module.exports = async (req, res) => {
 
     return sendJSON(res, 200, {
       ok: true,
+      tier,
       improvedPrompt:      parsed.improvedPrompt      || '',
       selectedPerspective: parsed.selectedPerspective || '',
       whyImproved:         parsed.whyImproved         || [],

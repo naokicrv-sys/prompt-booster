@@ -603,6 +603,35 @@
     }
     .btn-dismiss:hover { color: #555; }
 
+    /* ===== パスコード入力 ===== */
+    .passcode-section { margin-bottom: 20px; }
+    .passcode-toggle {
+      background: none; border: none; font-family: 'DM Mono', monospace;
+      font-size: 12px; color: #aaa; cursor: pointer; padding: 0;
+      border-bottom: 1px solid #ddd; transition: all 0.15s; text-align: left;
+    }
+    .passcode-toggle:hover { color: #555; border-color: #999; }
+    .passcode-input-wrap { display: flex; gap: 8px; margin-top: 10px; }
+    .passcode-input {
+      flex: 1; padding: 10px 14px; border: 1px solid #e0ddd8;
+      border-radius: 8px; font-family: 'DM Mono', monospace;
+      font-size: 13px; outline: none; background: white; transition: border-color 0.15s;
+    }
+    .passcode-input:focus { border-color: #888; }
+    .btn-passcode-apply {
+      padding: 10px 16px; background: #1a1a1a; color: white;
+      border: none; border-radius: 8px; font-family: 'DM Mono', monospace;
+      font-size: 13px; cursor: pointer; transition: background 0.15s; white-space: nowrap;
+    }
+    .btn-passcode-apply:hover { background: #333; }
+    .btn-passcode-apply:disabled { background: #aaa; cursor: not-allowed; }
+    .passcode-error { font-size: 12px; color: #c00; margin-top: 6px; display: none; }
+    .member-badge {
+      display: none; background: #f0faf5; border: 1px solid #a8e6c8;
+      border-radius: 10px; padding: 10px 16px; font-size: 13px;
+      color: #1a7a4a; margin-bottom: 24px;
+    }
+
     /* ===== プラン比較 ===== */
     .plan-compare {
       margin-top: 64px;
@@ -689,9 +718,22 @@
   <div class="usage-counter">
     <span class="usage-counter-label">本日の無料残り回数</span>
     <div class="usage-counter-right">
-      <span class="usage-counter-value" id="usageCounterValue">2回</span>
+      <span class="usage-counter-value" id="usageCounterValue">3回</span>
       <a href="#plan-compare" class="usage-counter-link">回数を増やしたい方へ</a>
     </div>
+  </div>
+
+  <!-- メンバーバッジ -->
+  <div class="member-badge" id="memberBadge"></div>
+
+  <!-- 合言葉入力 -->
+  <div class="passcode-section" id="passcodeSection">
+    <button class="passcode-toggle" id="passcodeToggle">合言葉をお持ちの方はこちら ▾</button>
+    <div class="passcode-input-wrap" id="passcodeInputWrap" style="display:none">
+      <input type="text" class="passcode-input" id="passcodeInput" placeholder="合言葉を入力してください">
+      <button class="btn-passcode-apply" id="passcodeApply">確認</button>
+    </div>
+    <p class="passcode-error" id="passcodeError">合言葉が正しくありません</p>
   </div>
 
   <!-- ===== 入力フォーム ===== -->
@@ -891,7 +933,7 @@
       <div class="plan-card">
         <div class="plan-name">無料版</div>
         <ul class="plan-items">
-          <li class="hi">1日2回まで</li>
+          <li class="hi">1日3回まで</li>
           <li class="hi">基本の変換</li>
           <li class="hi">8種類の視点</li>
           <li>お試し向け</li>
@@ -918,8 +960,8 @@
   <div class="limit-modal">
     <div class="limit-modal-icon">☕</div>
     <h2>今日の無料利用は<br>ここまでです</h2>
-    <p>無料版は1日2回までお試しできます。</p>
-    <p>2回で足りない方は、noteメンバーシップ版をご利用ください。</p>
+    <p>無料版は1日3回までお試しできます。</p>
+    <p>3回で足りない方は、noteメンバーシップ版をご利用ください。</p>
     <div class="limit-modal-features">
       <div class="feat-title">noteメンバー向けでできること</div>
       <ul>
@@ -943,7 +985,7 @@
   const NOTE_MEMBERSHIP_URL = 'https://note.com/witty_crane8774/membership';
 
   // ===== 利用回数制限 =====
-  const USAGE_LIMIT = 2;
+  const USAGE_LIMIT = 3;
   const STORAGE_KEY_DATE  = 'promptBoosterUsageDate';
   const STORAGE_KEY_COUNT = 'promptBoosterUsageCount';
 
@@ -1008,6 +1050,69 @@
 
   // 初期表示
   updateUsageDisplay();
+
+  // ===== パスコード / メンバー管理 =====
+  const STORAGE_KEY_PASSCODE = 'promptBoosterPasscode';
+  const STORAGE_KEY_TIER     = 'promptBoosterTier';
+
+  let memberTier     = localStorage.getItem(STORAGE_KEY_TIER)     || 'free';
+  let storedPasscode = localStorage.getItem(STORAGE_KEY_PASSCODE) || '';
+
+  function isMember() { return memberTier === 'member' || memberTier === 'admin'; }
+
+  function applyMemberUI() {
+    if (!isMember()) return;
+    document.getElementById('passcodeSection').style.display = 'none';
+    const badge = document.getElementById('memberBadge');
+    badge.style.display = 'block';
+    badge.textContent = memberTier === 'admin'
+      ? '✓ 管理者モード — 回数制限なし'
+      : '✓ メンバー認証済み — 回数制限なし';
+    const el = document.getElementById('usageCounterValue');
+    if (el) { el.textContent = '無制限'; el.className = 'usage-counter-value'; }
+  }
+
+  // 合言葉トグル
+  document.getElementById('passcodeToggle').addEventListener('click', () => {
+    const wrap = document.getElementById('passcodeInputWrap');
+    wrap.style.display = wrap.style.display === 'none' ? 'flex' : 'none';
+  });
+
+  // 合言葉確認（APIで検証）
+  document.getElementById('passcodeApply').addEventListener('click', async () => {
+    const input = document.getElementById('passcodeInput').value.trim();
+    const errorEl = document.getElementById('passcodeError');
+    if (!input) return;
+    const btn = document.getElementById('passcodeApply');
+    btn.textContent = '確認中...';
+    btn.disabled = true;
+    errorEl.style.display = 'none';
+    try {
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawPrompt: '_passcode_check_', passcode: input }),
+      });
+      const data = await res.json();
+      if (data.tier === 'member' || data.tier === 'admin') {
+        memberTier = data.tier;
+        storedPasscode = input;
+        localStorage.setItem(STORAGE_KEY_TIER, memberTier);
+        localStorage.setItem(STORAGE_KEY_PASSCODE, storedPasscode);
+        applyMemberUI();
+      } else {
+        errorEl.style.display = 'block';
+      }
+    } catch {
+      errorEl.style.display = 'block';
+    } finally {
+      btn.textContent = '確認';
+      btn.disabled = false;
+    }
+  });
+
+  // ページロード時：保存済みパスコードがあれば即適用
+  if (storedPasscode) applyMemberUI();
 
   // ===== 状態管理 =====
   const state = {
@@ -1088,8 +1193,8 @@
   generateBtn.addEventListener('click', async () => {
     if (!state.rawPrompt) return;
 
-    // 利用回数チェック
-    if (getRemainingCount() <= 0) {
+    // 利用回数チェック（メンバー・管理者はスキップ）
+    if (!isMember() && getRemainingCount() <= 0) {
       showLimitModal();
       return;
     }
@@ -1115,6 +1220,7 @@
           depth:        state.depth,
           outputFormat: state.outputFormat,
           strictness:   state.strictness,
+          passcode:     storedPasscode,
         }),
       });
 
@@ -1137,7 +1243,7 @@
 
       state.result = data;
       renderResult(data);
-      incrementUsage(); // 成功時のみカウント
+      if (!isMember()) incrementUsage(); // メンバー・管理者はカウントしない
 
     } catch (err) {
       showError(err.message || 'エラーが発生しました。');
