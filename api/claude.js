@@ -13,36 +13,18 @@ const PERSPECTIVE_MAP = {
   auto:       '内容から最適な視点を自動選択',
 };
 
-const SYSTEM_PROMPT = `あなたはプロンプトエンジニアリングと実務設計の専門家です。
-ユーザーが入力した短い・弱い依頼を、ChatGPTがより正確で実用的に答えやすい強いプロンプトへ変換してください。
+const SYSTEM_PROMPT = `あなたはプロンプトエンジニアリングの専門家です。
+入力された短い依頼を、ChatGPTが正確に答えやすい強いプロンプトへ変換してください。
 
-条件:
-- まず依頼内容を読み、用途に最適な専門視点を判断する
-- perspective が "auto" 以外なら、その視点を優先する
-- 強化後プロンプトは必ず『あなたは〜です』から始める
-- 目的に応じた観点・評価軸・制約条件を具体的に追加する
-- 出力形式と粒度を明確に指定する
-- ChatGPTにそのまま貼れる日本語プロンプトとして出力する
-- 先頭に【使用視点: ○○】を1行入れる
-- その後に【強化後プロンプト】を出す
-- さらに【強化ポイント】を箇条書きで出す
-- さらに【このまま使う方法】を短く出す
-- さらに【追加で深掘りする追撃プロンプト】を1本出す
-- 出力は実務でそのまま使える形にする
-- 過剰に長くしすぎず、使いやすさを優先する
-- 金融助言や投資推奨のような危うい方向に寄せず、比較・整理・リスク洗い出し・判断材料整理の方向で強化する
-- 依頼が曖昧でも、ユーザーが次に進みやすい形へ補正する
+ルール:
+- 用途に最適な専門視点を判断する（perspective指定があればそれを優先）
+- 強化後プロンプトは『あなたは〜です』から始める
+- 観点・制約・出力形式を具体的に追加する
+- 金融助言・投資推奨は避け、比較・整理・リスク洗い出しの方向で強化する
+- 簡潔にまとめ、過剰に長くしない
 
-出力形式（JSON のみ。前置き・説明不要）:
-{
-  "selectedPerspective": "使用した視点名（例: マーケター）",
-  "improvedPrompt": "強化後プロンプト（そのままChatGPTに貼れるもの）",
-  "whyImproved": ["強化ポイント1", "強化ポイント2"],
-  "usageGuide": "このまま使う方法（短文）",
-  "followupPrompt": "追撃プロンプト（1本）",
-  "previewBenefits": ["得られやすいもの1", "得られやすいもの2"],
-  "suggestedNextAction": "次にやること（短文）"
-}`;
+必ずJSONのみを返すこと（前置き・説明不要）:
+{"selectedPerspective":"視点名","improvedPrompt":"強化後プロンプト","whyImproved":["ポイント1","ポイント2"],"usageGuide":"使い方（短文）","followupPrompt":"追撃プロンプト1本","previewBenefits":["得られるもの1","得られるもの2"],"suggestedNextAction":"次にやること"}`;
 
 function buildUserPrompt({ rawPrompt, preset, perspective, goal, depth, outputFormat, strictness }) {
   const perspectiveLabel = PERSPECTIVE_MAP[perspective] || '自動判定';
@@ -64,19 +46,31 @@ ${presetText}
 JSONフォーマットのみで返してください。`;
 }
 
-// エラーレスポンスを必ずJSONで返すヘルパー
+// 必ずJSONを返すヘルパー（res.json()に依存しない）
+function sendJSON(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.end(body);
+}
+
 function jsonError(res, status, error, details = '') {
-  return res.status(status).json({ ok: false, error, details });
+  console.error('[claude api error]', error, details);
+  return sendJSON(res, status, { ok: false, error, details });
 }
 
 module.exports = async (req, res) => {
-  // レスポンスは必ずJSONにする（Vercel自身のエラーを除く）
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // OPTIONS プリフライト
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.statusCode = 200;
+    res.end();
+    return;
+  }
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') {
     return jsonError(res, 405, 'このエンドポイントはPOSTのみ対応しています。');
   }
@@ -97,7 +91,8 @@ module.exports = async (req, res) => {
   try {
     const userPrompt = buildUserPrompt({ rawPrompt, preset, perspective, goal, depth, outputFormat, strictness });
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // Promise.race で25秒タイムアウト（AbortController不要）
+    const fetchPromise = fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -105,12 +100,26 @@ module.exports = async (req, res) => {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-6',
-        max_tokens: 2048,
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 800,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
       }),
     });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('TIMEOUT')), 25000)
+    );
+
+    let response;
+    try {
+      response = await Promise.race([fetchPromise, timeoutPromise]);
+    } catch (raceErr) {
+      if (raceErr.message === 'TIMEOUT') {
+        return jsonError(res, 504, 'AIの応答に時間がかかりすぎたため中断しました。少し時間をおいて再試行してください。', 'timeout after 25s');
+      }
+      throw raceErr;
+    }
 
     if (!response.ok) {
       const errBody = await response.text();
@@ -135,7 +144,7 @@ module.exports = async (req, res) => {
 
     const parsed = JSON.parse(jsonMatch[0]);
 
-    return res.status(200).json({
+    return sendJSON(res, 200, {
       ok: true,
       improvedPrompt:      parsed.improvedPrompt      || '',
       selectedPerspective: parsed.selectedPerspective || '',
